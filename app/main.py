@@ -1,6 +1,6 @@
 import os
 from typing import Optional
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -21,6 +21,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def send_personal_message(self, message: str, websocket: WebSocket):
+        await websocket.send_text(message)
+
+    async def broadcast(self, message: str):
+        for connection in self.active_connections:
+            await connection.send_text(message)
+
+
+manager = ConnectionManager()
 
 class Item(BaseModel):
     name: str
@@ -51,3 +72,13 @@ def update_item(item_id: int, item: Item):
 async def create_video(url: str):
     ret = await youtube_dl(url)
     return {"result": ret}
+
+
+@app.websocket("/chat")
+async def chat_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    while True:
+        data = await websocket.receive_text()
+        await manager.send_personal_message(f"Message text was: {data}", websocket)
+        await manager.broadcast(f"Someone Said: {data}")
+
